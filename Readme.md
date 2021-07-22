@@ -17,5 +17,6 @@ go run main.go -addr 127.0.0.1 -port 3001 -dir /tmp -dump
 ### uploads:
     /loot accepts uploads 
 ```
-    curl -F 'file=@./test.txt' http://127.0.0.1:3001/loot```
+curl -F 'file=@./test.txt' http://127.0.0.1:3001/loot
+```
 
