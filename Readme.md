@@ -44,3 +44,6 @@ goserver -addr 127.0.0.1 -port 3001 -dir /tmp -dump -auth user:passwerd
 curl -F 'file=@/tmp/test.txt' http://user:passwerd@127.0.0.1:3001/loot
 ```
 ![Alt text](./misc/im-upload.png?raw=true "Upload")
+
+### Special Parameters
+ - POST/GET parameter "base64": will base64 decode the parameters data and display it as normal text (only if using -dump).

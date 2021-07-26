@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -91,8 +93,10 @@ func DumpReq(w http.ResponseWriter, req *http.Request, auth bool) {
 	log.Println(req.Method, "from", req.RemoteAddr+":", req.URL.Path, authmsg)
 	if Dump {
 		qp := ""
+		query := parseParams(req.URL.RawQuery)
+
 		if len(req.URL.RawQuery) > 0 {
-			qp = "?" + req.URL.RawQuery
+			qp = "?" + query
 		}
 
 		// fmt.Println(req.Method + " " + req.URL.Path + qp + " " + req.Proto)
@@ -114,14 +118,49 @@ func DumpReq(w http.ResponseWriter, req *http.Request, auth bool) {
 		for k := range req.Header {
 			fmt.Println(k + ": " + req.Header.Get(k))
 		}
-		fmt.Println("\n")
-		fmt.Println(string(body))
+		fmt.Printf("\n\n")
+		tmpBody := parseParams(string(body))
+
+		fmt.Println(tmpBody)
 		req.Body.Close() //  must close
 		req.Body = ioutil.NopCloser(bytes.NewBuffer(body))
 		fmt.Println("-------------------------------------------------------------------------------------", Reset)
 
 	}
 
+}
+
+// parseParams handles "special" GET/POST params like base64, for exfilling encoded data
+func parseParams(data string) string {
+	parts := strings.Split(data, "&")
+	if len(parts) > 0 {
+		for _, set := range parts {
+			setparts := strings.SplitN(set, "=", 2)
+			if setparts[0] == "base64" {
+				decodeddata := urlDecode(setparts[1])
+				data = strings.Replace(data, setparts[1], b64Decode(decodeddata), 1)
+			}
+		}
+	}
+	return data
+}
+
+func urlDecode(encodedValue string) string {
+	var err error
+	decodedValue := encodedValue
+
+	decodedValue, err = url.QueryUnescape(encodedValue)
+	if err != nil {
+		return encodedValue
+	}
+	return decodedValue
+}
+func b64Decode(encodedValue string) string {
+	data, err := base64.StdEncoding.DecodeString(encodedValue)
+	if err != nil {
+		return encodedValue
+	}
+	return string(data)
 }
 
 func ServeFiles(h http.Handler) http.Handler {
