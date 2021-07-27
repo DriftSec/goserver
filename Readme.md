@@ -1,7 +1,7 @@
 
 
 ## GoServer
-### Alternative to python SimpleHTTPServer for using in red teaming.
+### Alternative to python SimpleHTTPServer for use in red teaming.
  - Dump the full request to view cookies, headers and POST data.
  - Supports File uploads for data exfiltration
  - Supports Basic Auth
