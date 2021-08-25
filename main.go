@@ -31,6 +31,7 @@ var WorkDir string
 var DoAuth bool
 var Username string
 var Password string
+var RedirectURL string
 
 func CheckAuth(r *http.Request) bool {
 	if !DoAuth {
@@ -195,9 +196,16 @@ func listURLs(addr, port string, ssl bool) {
 	fmt.Println()
 }
 
+func Redir(w http.ResponseWriter, r *http.Request) {
+	auth := CheckAuth(r)
+	DumpReq(w, r, auth)
+	http.Redirect(w, r, RedirectURL, http.StatusSeeOther)
+}
+
 func main() {
 
 	port := flag.String("port", "8000", "Listen port")
+	redirect := flag.String("redirect", "", "Redirect to [STRING] via 301")
 	addr := flag.String("addr", "", "Listen address")
 	dump := flag.Bool("dump", false, "dump full requests")
 	workdir := flag.String("dir", "./", "Working directory")
@@ -210,6 +218,7 @@ func main() {
 
 	WorkDir = *workdir
 	Dump = *dump
+	RedirectURL = *redirect
 
 	if *ssl {
 		if *sslcrt == "" || *sslkey == "" {
@@ -236,8 +245,11 @@ func main() {
 	fmt.Println(Blue+"[!] SSL Enabled:", *ssl, Reset)
 	listURLs(*addr, *port, *ssl)
 	http.HandleFunc("/loot", DropLoot)
-	http.Handle("/", ServeFiles(http.FileServer(http.Dir(*workdir))))
-
+	if *redirect == "" {
+		http.Handle("/", ServeFiles(http.FileServer(http.Dir(*workdir))))
+	} else {
+		http.HandleFunc("/", Redir)
+	}
 	if *ssl {
 		err := http.ListenAndServeTLS(*addr+":"+*port, *sslcrt, *sslkey, nil)
 		if err != nil {
