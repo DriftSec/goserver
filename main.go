@@ -239,6 +239,8 @@ func main() {
 		}
 	}
 
+	fmt.Println(Blue + "[!] Upload URI: /loot (curl -F \"file=@./file.txt\" http[s]://address:port/loot)" + Reset)
+	fmt.Println(Blue + "[!] Special Params: base64 (GET/POST)" + Reset)
 	fmt.Println(Blue+"[!] Dump Requests:", *dump, Reset)
 	fmt.Println(Blue+"[!] Auth Enabled:", DoAuth, Reset)
 	fmt.Println(Blue+"[!] Working Directory:", *workdir, Reset)
