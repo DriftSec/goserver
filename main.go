@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"elkproxy/proxy"
 	"encoding/base64"
 	"flag"
 	"fmt"
@@ -222,8 +223,13 @@ func main() {
 
 	if *ssl {
 		if *sslcrt == "" || *sslkey == "" {
-			fmt.Println(Red+"[ERROR] -cert and -key are required for SSL.", Reset)
-			os.Exit(1)
+			fmt.Println(Green+"[+] Generating a New certificate...", Reset)
+			_, _, err := proxy.LoadOrCreateCA("/tmp/key", "/tmp/cert")
+			if err != nil {
+				log.Fatal("could not create/load CA key pair: %w", err)
+			}
+			*sslcrt = "/tmp/cert"
+			*sslkey = "/tmp/key"
 		}
 	}
 
