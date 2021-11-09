@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/projectdiscovery/sslcert"
 )
 
 const (
@@ -35,7 +37,9 @@ var Port string
 var SSL bool
 var SSLCert string
 var SSLKey string
+var SSLDomain string
 var Headers map[string]string
+var CustomResponses map[string]string
 
 func CheckAuth(r *http.Request) bool {
 	if !DoAuth {
@@ -210,19 +214,14 @@ func Redir(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, RedirectURL, http.StatusSeeOther)
 }
 
-func Run() {
-	if SSL {
-		if SSLCert == "" || SSLKey == "" {
-			fmt.Println(Green+"[+] Generating a New certificate (will be self signed !!)...", Reset)
-			_, _, err := LoadOrCreateCA("/tmp/key", "/tmp/cert")
-			if err != nil {
-				log.Fatal("could not create/load CA key pair: %w", err)
-			}
-			SSLCert = "/tmp/cert"
-			SSLKey = "/tmp/key"
-		}
-	}
+func ServeCustom(w http.ResponseWriter, r *http.Request) {
+	auth := CheckAuth(r)
+	DumpReq(w, r, auth)
+	// TODO: handle parsing the raw request file
+	fmt.Println("NOT DONE CODING THIS!!!! >>>>>>>>>>>>>>>> reading from file:", CustomResponses[r.URL.Path])
+}
 
+func Run() {
 	fmt.Println(Blue + "[!] Upload URI: /loot (curl -F \"file=@./file.txt\" http[s]://address:port/loot)" + Reset)
 	fmt.Println(Blue + "[!] Special Params: base64 (GET/POST)" + Reset)
 	fmt.Println(Blue+"[!] Dump Requests:", Dump, Reset)
@@ -236,10 +235,34 @@ func Run() {
 	} else {
 		http.HandleFunc("/", Redir)
 	}
+
+	if len(CustomResponses) > 0 {
+		for k, _ := range CustomResponses {
+			http.HandleFunc(k, ServeCustom)
+		}
+	}
+
 	if SSL {
-		err := http.ListenAndServeTLS(Addr+":"+Port, SSLCert, SSLKey, nil)
-		if err != nil {
-			log.Fatal("ListenAndServeTLS: ", err)
+		if SSLCert == "" || SSLKey == "" {
+			tlsOptions := sslcert.DefaultOptions
+			tlsOptions.Host = SSLDomain
+			tlsConfig, err := sslcert.NewTLSConfig(tlsOptions)
+			if err != nil {
+				log.Fatal(err)
+			}
+			server := &http.Server{
+				Addr:      Addr + ":" + Port,
+				TLSConfig: tlsConfig,
+			}
+			err = server.ListenAndServeTLS("", "")
+			if err != nil {
+				log.Fatal("ListenAndServeTLS: ", err)
+			}
+		} else {
+			err := http.ListenAndServeTLS(Addr+":"+Port, SSLCert, SSLKey, nil)
+			if err != nil {
+				log.Fatal("ListenAndServeTLS: ", err)
+			}
 		}
 	} else {
 		err := http.ListenAndServe(Addr+":"+Port, nil)
