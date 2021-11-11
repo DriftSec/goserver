@@ -45,24 +45,30 @@ func main() {
 	sslcrt := flag.String("sslcert", "", "Path to SSL .crt file, if ommitted self signed will be generated")
 	sslkey := flag.String("sslkey", "", "Path to SSL .key file, if ommitted self signed will be generated")
 	flag.Var(&RespHeaders, "H", "Add response header 'name: value', use multiple times")
+	jsonlog := flag.String("jsonlog", "", "Log requests to json file")
 	flag.Parse()
 
-	goserver.WorkDir = *workdir
-	goserver.Dump = *dump
-	goserver.RedirectURL = *redirect
-	goserver.Addr = *addr
-	goserver.Port = *port
-	goserver.SSL = *ssl
-	goserver.SSLCert = *sslcrt
-	goserver.SSLKey = *sslkey
-	goserver.SSLDomain = *domain
-	goserver.Headers = make(map[string]string)
-	goserver.CustomResponses = make(map[string]string)
+	goserver.HttpCfg.WorkDir = *workdir
+	goserver.HttpCfg.Dump = *dump
+	goserver.HttpCfg.RedirectURL = *redirect
+	goserver.HttpCfg.Addr = *addr
+	goserver.HttpCfg.Port = *port
+	goserver.HttpCfg.SSL = *ssl
+	goserver.HttpCfg.SSLCert = *sslcrt
+	goserver.HttpCfg.SSLKey = *sslkey
+	goserver.HttpCfg.SSLDomain = *domain
+	goserver.HttpCfg.Headers = make(map[string]string)
+	goserver.HttpCfg.CustomResponses = make(map[string]string)
+
+	if *jsonlog != "" {
+		goserver.HttpCfg.JSONDoLog = true
+		goserver.HttpCfg.JSONLogFile = *jsonlog
+	}
 
 	for _, h := range RespHeaders {
 		tmp := strings.Replace(h, ": ", ":", 1)
 		prts := strings.SplitN(tmp, ":", 2)
-		goserver.Headers[prts[0]] = prts[1]
+		goserver.HttpCfg.Headers[prts[0]] = prts[1]
 	}
 
 	for _, r := range CustomResponse {
@@ -71,7 +77,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		goserver.CustomResponses[prts[0]] = prts[1]
+		goserver.HttpCfg.CustomResponses[prts[0]] = prts[1]
 	}
 
 	if *auth != "" {
@@ -80,9 +86,9 @@ func main() {
 			fmt.Println(goserver.Red+"[ERROR] invalid auth string: must be 'user:password'", goserver.Reset)
 			os.Exit(1)
 		} else {
-			goserver.DoAuth = true
-			goserver.Username = parts[0]
-			goserver.Password = parts[1]
+			goserver.HttpCfg.DoAuth = true
+			goserver.HttpCfg.Username = parts[0]
+			goserver.HttpCfg.Password = parts[1]
 		}
 	}
 
