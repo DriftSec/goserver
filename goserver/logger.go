@@ -24,8 +24,8 @@ type RequestLog struct {
 
 var JSON []RequestLog
 
-func LogRequest(r *http.Request) {
-	if !HttpCfg.JSONDoLog {
+func (hc *HTTPConfig) LogRequest(r *http.Request) {
+	if !hc.JSONDoLog {
 		return
 	}
 	rl := &RequestLog{}
@@ -40,19 +40,19 @@ func LogRequest(r *http.Request) {
 		rl.Request = base64.StdEncoding.EncodeToString(req)
 	}
 	tmp := []string{}
-	exfil := parseExfil(r)
+	exfil := hc.parseExfil(r)
 	if len(exfil) > 0 {
 		for k, v := range exfil {
 			tmp = append(tmp, k+"="+strings.TrimRight(v, "\n"))
 		}
 		rl.Exfil = strings.Join(tmp, ",") //strings.TrimRight(exmsg, "\n")
 	}
-	appendJSONFile(*rl)
+	hc.appendJSONFile(*rl)
 }
 
-func appendJSONFile(rl RequestLog) {
+func (hc *HTTPConfig) appendJSONFile(rl RequestLog) {
 	// assume err is because new file/no data
-	tmpdata, _ := os.ReadFile(HttpCfg.JSONLogFile)
+	tmpdata, _ := os.ReadFile(hc.JSONLogFile)
 	json.Unmarshal(tmpdata, &JSON)
 	JSON = append(JSON, rl)
 
@@ -61,7 +61,7 @@ func appendJSONFile(rl RequestLog) {
 		fmt.Println("[ERROR] JSON Logger:", err)
 		return
 	}
-	err = os.WriteFile(HttpCfg.JSONLogFile, data, 0755)
+	err = os.WriteFile(hc.JSONLogFile, data, 0755)
 	if err != nil {
 		log.Fatal("Failed to log JSON to file")
 	}

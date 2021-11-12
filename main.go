@@ -48,27 +48,28 @@ func main() {
 	jsonlog := flag.String("jsonlog", "", "Log requests to json file")
 	flag.Parse()
 
-	goserver.HttpCfg.WorkDir = *workdir
-	goserver.HttpCfg.Dump = *dump
-	goserver.HttpCfg.RedirectURL = *redirect
-	goserver.HttpCfg.Addr = *addr
-	goserver.HttpCfg.Port = *port
-	goserver.HttpCfg.SSL = *ssl
-	goserver.HttpCfg.SSLCert = *sslcrt
-	goserver.HttpCfg.SSLKey = *sslkey
-	goserver.HttpCfg.SSLDomain = *domain
-	goserver.HttpCfg.Headers = make(map[string]string)
-	goserver.HttpCfg.CustomResponses = make(map[string]string)
+	hc := goserver.New()
+
+	hc.WorkDir = *workdir
+	hc.Dump = *dump
+	hc.RedirectURL = *redirect
+	hc.Addr = *addr
+	hc.Port = *port
+	hc.SSL = *ssl
+	hc.SSLCert = *sslcrt
+	hc.SSLKey = *sslkey
+	hc.SSLDomain = *domain
+	hc.Silent = false
 
 	if *jsonlog != "" {
-		goserver.HttpCfg.JSONDoLog = true
-		goserver.HttpCfg.JSONLogFile = *jsonlog
+		hc.JSONDoLog = true
+		hc.JSONLogFile = *jsonlog
 	}
 
 	for _, h := range RespHeaders {
 		tmp := strings.Replace(h, ": ", ":", 1)
 		prts := strings.SplitN(tmp, ":", 2)
-		goserver.HttpCfg.Headers[prts[0]] = prts[1]
+		hc.Headers[prts[0]] = prts[1]
 	}
 
 	for _, r := range CustomResponse {
@@ -77,7 +78,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		goserver.HttpCfg.CustomResponses[prts[0]] = prts[1]
+		hc.CustomResponses[prts[0]] = prts[1]
 	}
 
 	if *auth != "" {
@@ -86,12 +87,12 @@ func main() {
 			fmt.Println(goserver.Red+"[ERROR] invalid auth string: must be 'user:password'", goserver.Reset)
 			os.Exit(1)
 		} else {
-			goserver.HttpCfg.DoAuth = true
-			goserver.HttpCfg.Username = parts[0]
-			goserver.HttpCfg.Password = parts[1]
+			hc.DoAuth = true
+			hc.Username = parts[0]
+			hc.Password = parts[1]
 		}
 	}
 
-	goserver.Run()
+	hc.Run()
 
 }
