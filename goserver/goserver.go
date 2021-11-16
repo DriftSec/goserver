@@ -58,6 +58,7 @@ type HTTPConfig struct {
 	router          *mux.Router
 	Running         bool
 	Blacklist       []string
+	OnlyUS          bool
 }
 
 // var HttpCfg HTTPConfig
@@ -71,6 +72,12 @@ func New() *HTTPConfig {
 
 func (hc *HTTPConfig) Blacklisted(req *http.Request) (bool, *getasn.IPInfo) {
 	ipinfo, err := getasn.GetASN(strings.Split(req.RemoteAddr, ":")[0])
+	if hc.OnlyUS {
+		if ipinfo.Country != "US" {
+			log.Println("HTTP/s Blacklisted Non US:", ipinfo.Country)
+			return true, ipinfo
+		}
+	}
 	if len(hc.Blacklist) == 0 {
 		return false, ipinfo
 	}
