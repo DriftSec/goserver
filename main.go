@@ -3,9 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
-	"goserver/goserver"
 	"os"
 	"strings"
+
+	"github.com/driftsec/goserver/goserver"
 )
 
 type HeaderSlice []string

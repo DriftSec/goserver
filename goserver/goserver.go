@@ -71,20 +71,22 @@ func New() *HTTPConfig {
 }
 
 func (hc *HTTPConfig) Blacklisted(req *http.Request) (bool, *getasn.IPInfo) {
-	ipinfo, err := getasn.GetASN(strings.Split(req.RemoteAddr, ":")[0])
-	if hc.OnlyUS {
-		if ipinfo.Country != "US" {
-			log.Println("HTTP/s Blacklisted Non US:", ipinfo.Country)
-			return true, ipinfo
-		}
+	// ipinfo, err := getasn.GetASN(strings.Split(req.RemoteAddr, ":")[0]) // disabled for now, too many extra requests for normal use.
+	ipinfo := &getasn.IPInfo{}
+	return false, ipinfo
+	var err error
+	if err != nil {
+		log.Println("[ERROR] ipinfo.io:", err)
+	}
+	if hc.OnlyUS && ipinfo.Country != "" && ipinfo.Country != "US" {
+		log.Println("HTTP/s Blacklisted Non US:", ipinfo.Country)
+		return true, ipinfo
+
 	}
 	if len(hc.Blacklist) == 0 {
 		return false, ipinfo
 	}
 
-	if err != nil {
-		log.Println("[ERROR] ipinfo.io:", err)
-	}
 	for _, regx := range hc.Blacklist {
 		if regx == "" {
 			continue
@@ -93,17 +95,19 @@ func (hc *HTTPConfig) Blacklisted(req *http.Request) (bool, *getasn.IPInfo) {
 		if err != nil {
 			log.Println("[ERROR] blacklist regex", regx+":", err)
 		}
-		if r.MatchString(ipinfo.Org) {
-			log.Println("HTTP/s Blacklist ASN:", regx, ">>", ipinfo.Org)
-			return true, ipinfo
-		}
-		if r.MatchString(ipinfo.Region) {
-			log.Println("HTTP/s Blacklist Region:", regx, ">>", ipinfo.Region)
-			return true, ipinfo
-		}
-		if r.MatchString(ipinfo.Country) {
-			log.Println("HTTP/s Blacklist Country:", regx, ">>", ipinfo.Country)
-			return true, ipinfo
+		if ipinfo.Org != "" {
+			if r.MatchString(ipinfo.Org) {
+				log.Println("HTTP/s Blacklist ASN:", regx, ">>", ipinfo.Org)
+				return true, ipinfo
+			}
+			if r.MatchString(ipinfo.Region) {
+				log.Println("HTTP/s Blacklist Region:", regx, ">>", ipinfo.Region)
+				return true, ipinfo
+			}
+			if r.MatchString(ipinfo.Country) {
+				log.Println("HTTP/s Blacklist Country:", regx, ">>", ipinfo.Country)
+				return true, ipinfo
+			}
 		}
 		if r.MatchString(req.RemoteAddr) {
 			log.Println("HTTP/s Blacklist RemoteAddr:", regx, ">>", req.RemoteAddr)
@@ -183,7 +187,8 @@ func (hc *HTTPConfig) DumpReq(w http.ResponseWriter, req *http.Request, auth boo
 	if hc.SSL {
 		scheme = "HTTPS:"
 	}
-	log.Println(scheme, req.Method, "from", req.RemoteAddr, "(ASN: "+ipinfo.Org+"):", req.URL.Path, authmsg, exmsg)
+	// log.Println(scheme, req.Method, "from", req.RemoteAddr, "(ASN: "+ipinfo.Org+"):", req.URL.Path, authmsg, exmsg)
+	log.Println(scheme, req.Method, "from", req.RemoteAddr, ":", req.URL.Path, authmsg, exmsg)
 	if len(exfil) > 0 {
 		tmp := []string{}
 		for k, v := range exfil {
@@ -478,7 +483,7 @@ func (hc *HTTPConfig) Run() {
 			}
 			hc.server.TLSConfig = tlsConfig
 		}
-
+	
 		err := hc.server.ListenAndServeTLS(hc.SSLCert, hc.SSLKey)
 		if err != nil {
 			log.Println("ListenAndServeTLS: ", err)
@@ -487,7 +492,7 @@ func (hc *HTTPConfig) Run() {
 	} else {
 		err := hc.server.ListenAndServe()
 		if err != nil {
-			log.Println("ListenAndServeTLS: ", err)
+			log.Println("ListenAndServe: ", err)
 		}
 	}
 	hc.Running = false
