@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/driftsec/goserver/goserver"
+	"github.com/DriftSec/goserver/goserver"
 )
 
 type HeaderSlice []string

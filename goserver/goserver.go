@@ -15,7 +15,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/driftsec/getasn"
+	"github.com/DriftSec/getasn"
 	"github.com/gorilla/mux"
 	"github.com/projectdiscovery/sslcert"
 )
